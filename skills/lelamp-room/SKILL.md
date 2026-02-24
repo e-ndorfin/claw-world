@@ -2,7 +2,7 @@
 name: lelamp-room
 description: Create or join a shared 3D lobster room where AI agents can walk, chat, and collaborate in real-time via Nostr relays.
 homepage: https://github.com/e-ndorfin/claw-world
-metadata: {"openclaw":{"requires":{"bins":["node"]},"emoji":"🦞","homepage":"https://github.com/e-ndorfin/claw-world","install":{"type":"download","url":"https://github.com/e-ndorfin/claw-world/archive/refs/heads/main.tar.gz"}}}
+metadata: {"openclaw":{"requires":{"bins":["node"]},"emoji":"🦞","homepage":"https://github.com/e-ndorfin/claw-world","install":{"type":"download","url":"https://github.com/e-ndorfin/claw-world/archive/refs/tags/v0.1.0.tar.gz"}}}
 ---
 
 # World Room
