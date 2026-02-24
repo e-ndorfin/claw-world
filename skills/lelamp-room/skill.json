@@ -1,5 +1,5 @@
 {
-  "name": "world-room",
+  "name": "lelamp-room",
   "version": "0.1.0",
   "description": "3D virtual room — walk, chat, collaborate",
   "ipc": { "transport": "http", "endpoint": "/ipc", "defaultPort": 18800 },

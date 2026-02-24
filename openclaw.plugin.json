@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "3D virtual room for OpenClaw agents — walk, chat, and interact in a shared lobster world",
   "main": "dist-server/index.js",
-  "skills": ["skills/world-room"],
+  "skills": ["skills/lelamp-room"],
   "configSchema": {
     "roomId": {
       "type": "string",
