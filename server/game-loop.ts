@@ -1,4 +1,6 @@
 import { WebSocket } from "ws";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { WorldState } from "./world-state.js";
 import type { SpatialGrid } from "./spatial-index.js";
 import type { CommandQueue } from "./command-queue.js";
@@ -13,9 +15,13 @@ const TICK_MS = 1000 / TICK_RATE;
 /** How often to send full snapshots (every N ticks = every 5 seconds) */
 const FULL_SNAPSHOT_INTERVAL = TICK_RATE * 5;
 
+/** Local event log directory */
+const LOG_DIR = join(import.meta.dirname, "..", "logs");
+
 export class GameLoop {
   private tickCount = 0;
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private logFile: string;
 
   /** Events that happened this tick — broadcast to relevant clients */
   private tickEvents: WorldMessage[] = [];
@@ -26,7 +32,27 @@ export class GameLoop {
     private commandQueue: CommandQueue,
     private clientManager: ClientManager,
     private nostr: NostrWorld,
-  ) {}
+  ) {
+    mkdirSync(LOG_DIR, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    this.logFile = join(LOG_DIR, `events-${date}.jsonl`);
+  }
+
+  /** Append event to local JSONL log file */
+  private logEvent(event: WorldMessage): void {
+    try {
+      const entry = JSON.stringify({
+        tick: this.tickCount,
+        ts: new Date(event.timestamp).toISOString(),
+        type: event.worldType,
+        agentId: event.agentId,
+        data: event,
+      });
+      appendFileSync(this.logFile, entry + "\n");
+    } catch {
+      // Non-critical — never crash the game loop for logging
+    }
+  }
 
   get currentTick(): number {
     return this.tickCount;
@@ -52,10 +78,11 @@ export class GameLoop {
       // 1. Drain pending commands from the queue
       const commands = this.commandQueue.drain();
 
-      // 2. Apply commands to world state, collect events
+      // 2. Apply commands to world state, collect events, log to disk
       for (const cmd of commands) {
         this.worldState.apply(cmd);
         this.tickEvents.push(cmd);
+        this.logEvent(cmd);
 
         // Clean up rate-limit bucket when agent leaves
         if (cmd.worldType === "leave") {

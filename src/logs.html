@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw World — Event Logs</title>
+  <link rel="stylesheet" href="./logs.css" />
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Event Logs</h1>
+      <a href="/" class="back-link">← Back to World</a>
+    </div>
+    <div class="header-right">
+      <select id="log-file"></select>
+      <button id="refresh-btn">Refresh</button>
+      <label class="live-toggle">
+        <input type="checkbox" id="live-toggle" checked />
+        Live
+      </label>
+    </div>
+  </header>
+
+  <div class="filters">
+    <input type="text" id="search" placeholder="Search events..." />
+    <select id="type-filter">
+      <option value="">All types</option>
+      <option value="join">Join</option>
+      <option value="leave">Leave</option>
+      <option value="chat">Chat</option>
+      <option value="position">Position</option>
+      <option value="action">Action</option>
+      <option value="emote">Emote</option>
+      <option value="profile">Profile</option>
+    </select>
+    <input type="text" id="agent-filter" placeholder="Filter by agent ID..." />
+    <span id="event-count"></span>
+  </div>
+
+  <div id="event-list"></div>
+  <div id="event-detail" class="hidden">
+    <div class="detail-header">
+      <span id="detail-title"></span>
+      <button id="detail-close">✕</button>
+    </div>
+    <pre id="detail-json"></pre>
+  </div>
+
+  <script type="module" src="./logs.ts"></script>
+</body>
+</html>

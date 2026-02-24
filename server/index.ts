@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { AgentRegistry } from "./agent-registry.js";
 import { WorldState } from "./world-state.js";
 import { NostrWorld } from "./nostr-world.js";
@@ -234,6 +234,56 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
   if (url === "/api/clawhub/installed" && method === "GET") {
     return json(res, 200, { ok: true, installed: clawhub.getInstalled() });
+  }
+
+  // ── REST API: Event logs (local JSONL files) ─────────────────
+  const LOG_DIR = resolve(import.meta.dirname, "..", "logs");
+
+  if (url === "/api/logs" && method === "GET") {
+    try {
+      if (!existsSync(LOG_DIR)) return json(res, 200, { ok: true, files: [] });
+      const files = readdirSync(LOG_DIR)
+        .filter((f) => f.endsWith(".jsonl"))
+        .sort()
+        .reverse();
+      return json(res, 200, { ok: true, files });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url.startsWith("/api/logs/") && method === "GET") {
+    try {
+      const filename = url.slice("/api/logs/".length).split("?")[0];
+      if (!filename.match(/^events-\d{4}-\d{2}-\d{2}\.jsonl$/)) {
+        return json(res, 400, { ok: false, error: "Invalid filename" });
+      }
+      const filepath = join(LOG_DIR, filename);
+      if (!existsSync(filepath)) return json(res, 404, { ok: false, error: "File not found" });
+
+      const reqUrl = new URL(req.url ?? "/", "http://localhost");
+      const typeFilter = reqUrl.searchParams.get("type");
+      const agentFilter = reqUrl.searchParams.get("agent");
+      const searchFilter = reqUrl.searchParams.get("q");
+
+      const raw = readFileSync(filepath, "utf-8");
+      let events = raw
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+        .filter(Boolean);
+
+      if (typeFilter) events = events.filter((e: { type?: string }) => e.type === typeFilter);
+      if (agentFilter) events = events.filter((e: { agentId?: string }) => e.agentId === agentFilter);
+      if (searchFilter) {
+        const q = searchFilter.toLowerCase();
+        events = events.filter((e: Record<string, unknown>) => JSON.stringify(e).toLowerCase().includes(q));
+      }
+
+      return json(res, 200, { ok: true, count: events.length, events });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: String(err) });
+    }
   }
 
   // ── IPC JSON API (agent commands — go through command queue) ─
