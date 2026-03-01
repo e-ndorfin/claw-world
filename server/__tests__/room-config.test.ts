@@ -28,7 +28,7 @@ describe("loadRoomConfig", () => {
   it.each([
     ["roomName", "Lobster Room"],
     ["roomDescription", ""],
-    ["host", "127.0.0.1"],
+    ["host", "0.0.0.0"],
     ["port", 18800],
     ["maxAgents", 50],
   ] as const)("defaults %s to %s", (field, expected) => {

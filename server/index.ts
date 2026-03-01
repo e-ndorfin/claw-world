@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { resolve, join, extname } from "node:path";
 import { AgentRegistry } from "./agent-registry.js";
 import { WorldState } from "./world-state.js";
 import { NostrWorld } from "./nostr-world.js";
@@ -309,6 +309,46 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     });
   }
 
+  // ── Static file serving (production: serve built frontend) ────
+  const DIST_DIR = resolve(import.meta.dirname, "..", "dist");
+  if (method === "GET" && existsSync(DIST_DIR)) {
+    const MIME: Record<string, string> = {
+      ".html": "text/html", ".js": "application/javascript", ".css": "text/css",
+      ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
+      ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2",
+      ".woff": "font/woff", ".ttf": "font/ttf", ".map": "application/json",
+    };
+
+    // Map clean paths to files
+    let filePath: string;
+    if (url === "/" || url === "/index.html") {
+      filePath = join(DIST_DIR, "index.html");
+    } else if (url === "/logs" || url === "/logs.html") {
+      filePath = join(DIST_DIR, "logs.html");
+    } else {
+      filePath = join(DIST_DIR, url.split("?")[0]);
+    }
+
+    // Prevent path traversal
+    if (filePath.startsWith(DIST_DIR) && existsSync(filePath)) {
+      try {
+        const stat = statSync(filePath);
+        if (stat.isFile()) {
+          const ext = extname(filePath);
+          const contentType = MIME[ext] ?? "application/octet-stream";
+          const body = readFileSync(filePath);
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Content-Length": body.byteLength,
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(body);
+          return;
+        }
+      } catch { /* fall through to 404 */ }
+    }
+  }
+
   json(res, 404, { error: "Not found" });
 });
 
@@ -352,6 +392,14 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
 
   switch (command) {
     case "register": {
+      const roomToken = process.env.ROOM_TOKEN;
+      if (roomToken) {
+        const provided = (args as { token?: string })?.token;
+        if (provided !== roomToken) {
+          return { ok: false, error: "invalid token" };
+        }
+      }
+
       const onlineCount = state.getActiveAgentIds().size;
       if (onlineCount >= config.maxAgents) {
         return { ok: false, error: `Room is full (${config.maxAgents} max)` };
@@ -365,6 +413,7 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
         capabilities?: string[];
         color?: string;
         skills?: AgentSkillDeclaration[];
+        token?: string;
       };
       if (!a?.agentId) throw new Error("agentId required");
       const profile = registry.register(a);
@@ -381,12 +430,13 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
       };
       commandQueue.enqueue(joinMsg);
 
-      const previewUrl = `http://localhost:${process.env.VITE_PORT ?? "3000"}/?agent=${encodeURIComponent(profile.agentId)}`;
+      const baseUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
+      const previewUrl = `${baseUrl}/?agent=${encodeURIComponent(profile.agentId)}`;
       return {
         ok: true,
         profile,
         previewUrl,
-        ipcUrl: `http://127.0.0.1:${config.port}/ipc`,
+        ipcUrl: `${baseUrl}/ipc`,
       };
     }
 

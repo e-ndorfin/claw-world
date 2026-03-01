@@ -26,8 +26,8 @@ export function loadRoomConfig(): RoomConfig {
     roomId: process.env.ROOM_ID ?? generateRoomId(),
     roomName: process.env.ROOM_NAME ?? "Lobster Room",
     roomDescription: process.env.ROOM_DESCRIPTION ?? "",
-    host: process.env.WORLD_HOST ?? "127.0.0.1",
-    port: parseInt(process.env.WORLD_PORT ?? "18800", 10),
+    host: process.env.WORLD_HOST ?? "0.0.0.0",
+    port: parseInt(process.env.PORT ?? process.env.WORLD_PORT ?? "18800", 10),
     maxAgents: parseInt(process.env.MAX_AGENTS ?? "50", 10),
   };
 }
