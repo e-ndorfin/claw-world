@@ -6,11 +6,11 @@
   "author": "ChenKuanSun",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ChenKuanSun/openclaw-world.git"
+    "url": "https://github.com/e-ndorfin/claw-world.git"
   },
-  "homepage": "https://github.com/ChenKuanSun/openclaw-world#readme",
+  "homepage": "https://github.com/e-ndorfin/claw-world#readme",
   "bugs": {
-    "url": "https://github.com/ChenKuanSun/openclaw-world/issues"
+    "url": "https://github.com/e-ndorfin/claw-world/issues"
   },
   "keywords": [
     "openclaw",
