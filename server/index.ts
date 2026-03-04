@@ -18,7 +18,7 @@ import { ObjectRegistry } from "./object-registry.js";
 import { ItemState } from "./item-state.js";
 import { CraftEngine } from "./craft-engine.js";
 import { objectCache } from "./object-cache.js";
-import type { WorldMessage, JoinMessage, AgentSkillDeclaration, ItemSpawnMessage, ItemPickupMessage, ItemDropMessage, ItemCraftMessage, ItemDespawnMessage } from "./types.js";
+import type { WorldMessage, JoinMessage, PositionMessage, AgentSkillDeclaration, ItemSpawnMessage, ItemPickupMessage, ItemDropMessage, ItemCraftMessage, ItemDespawnMessage } from "./types.js";
 import { ITEM_PICKUP_RADIUS } from "./types.js";
 
 // ── Room configuration ────────────────────────────────────────
@@ -49,6 +49,11 @@ commandQueue.setObstacles([
 ]);
 
 const gameLoop = new GameLoop(state, spatialGrid, commandQueue, clientManager, nostr, itemState, objectRegistry);
+
+// ── Announcement tracking ────────────────────────────────────
+let currentAnnouncement = "";
+let announcementTs = 0;
+const agentAnnouncementState = new Map<string, { seenAt: number; callCount: number }>();
 
 // ── Room info ──────────────────────────────────────────────────
 
@@ -255,7 +260,11 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
       const key = body.prompt.toLowerCase().trim();
 
-      // Cache check
+      // Two-tier cache: persisted registry first, then in-memory
+      const registryHit = objectRegistry.findByName(body.prompt);
+      if (registryHit?.code) {
+        return json(res, 200, { ok: true, name: registryHit.name, code: registryHit.code });
+      }
       const cached = objectCache.get(key);
       if (cached) {
         return json(res, 200, { ok: true, name: cached.name, code: cached.code });
@@ -304,6 +313,10 @@ Requirements:
       }
 
       objectCache.set(key, body.prompt, code);
+      // Persist code to registry if object type exists
+      if (registryHit) {
+        objectRegistry.setCode(registryHit.objectTypeId, code);
+      }
       return json(res, 200, { ok: true, name: body.prompt, code });
     } catch (err) {
       console.error("[generate-object] Error:", err);
@@ -470,12 +483,78 @@ Requirements:
     return json(res, 200, { ok: true });
   }
 
+  if (url === "/api/admin/broadcast" && method === "POST") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    try {
+      const body = (await readBody(req)) as { text?: string };
+      const text = body?.text?.trim();
+      if (!text) return json(res, 400, { ok: false, error: "text required" });
+      currentAnnouncement = text.slice(0, 500);
+      announcementTs = Date.now();
+      agentAnnouncementState.clear();
+      return json(res, 200, { ok: true });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url === "/api/admin/rally" && method === "POST") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    try {
+      const body = (await readBody(req)) as { x?: number; z?: number };
+      const x = Number(body?.x ?? 0);
+      const z = Number(body?.z ?? 0);
+      const activeIds = state.getActiveAgentIds();
+      let moved = 0;
+      for (const agentId of activeIds) {
+        const msg: PositionMessage = {
+          worldType: "position",
+          agentId,
+          x, y: 0, z,
+          rotation: 0,
+          timestamp: Date.now(),
+        };
+        commandQueue.enqueue(msg);
+        moved++;
+      }
+      currentAnnouncement = `All agents have been rallied to (${x}, ${z})`;
+      announcementTs = Date.now();
+      agentAnnouncementState.clear();
+      return json(res, 200, { ok: true, moved });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
   // ── IPC JSON API (agent commands — go through command queue) ─
   if (method === "POST" && (url === "/" || url === "/ipc")) {
     try {
-      const parsed = await readBody(req);
-      const result = await handleCommand(parsed as Record<string, unknown>);
-      return json(res, 200, result);
+      const parsed = (await readBody(req)) as Record<string, unknown>;
+      const result = await handleCommand(parsed);
+      const response = result as Record<string, unknown>;
+
+      // Inject announcement into IPC responses (skip dismiss-announcement itself)
+      const agentId = (parsed.args as Record<string, unknown> | undefined)?.agentId as string | undefined;
+      const command = parsed.command as string | undefined;
+      if (agentId && currentAnnouncement && command !== "dismiss-announcement") {
+        const agentState = agentAnnouncementState.get(agentId);
+        if (!agentState) {
+          // First time this agent sees the announcement
+          response.announcement = `NEW ANNOUNCEMENT: ${currentAnnouncement}`;
+          agentAnnouncementState.set(agentId, { seenAt: Date.now(), callCount: 0 });
+        } else {
+          agentState.callCount++;
+          if (agentState.callCount % 3 === 0) {
+            response.announcement = `Remember the announcement: ${currentAnnouncement}. If you have accomplished the goal outlined in the announcement, you can run dismiss-announcement.`;
+          }
+        }
+      }
+
+      return json(res, 200, response);
     } catch (err) {
       return json(res, 400, { error: String(err) });
     }
@@ -569,6 +648,8 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
   const agentCommands = new Set([
     "world-move", "world-action", "world-chat", "world-emote", "world-leave",
     "world-spawn", "world-pickup", "world-drop", "world-craft", "world-inventory",
+    "dismiss-announcement",
+    "look-around",
   ]);
   if (agentCommands.has(command)) {
     const agentId = (args as { agentId?: string })?.agentId;
@@ -1029,8 +1110,58 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
       };
     }
 
+    case "look-around": {
+      const a = args as { agentId: string };
+      const myPos = state.getPosition(a.agentId);
+      const myX = myPos?.x ?? 0;
+      const myZ = myPos?.z ?? 0;
+
+      // Build agent list (exclude calling agent)
+      const agents: { agentId: string; name: string; x: number; z: number }[] = [];
+      for (const [id, pos] of state.getAllPositions()) {
+        if (id === a.agentId) continue;
+        const profile = registry.get(id);
+        agents.push({ agentId: id, name: profile?.name ?? id, x: pos.x, z: pos.z });
+      }
+
+      // Build grouped items list
+      const groundItems = itemState.getGroundItems();
+      const groups = new Map<string, { name: string; items: { itemId: string; x: number; z: number; dist: number }[] }>();
+      for (const item of groundItems) {
+        let group = groups.get(item.objectTypeId);
+        if (!group) {
+          const objType = objectRegistry.get(item.objectTypeId);
+          group = { name: objType?.name ?? item.objectTypeId, items: [] };
+          groups.set(item.objectTypeId, group);
+        }
+        const dx = item.x - myX;
+        const dz = item.z - myZ;
+        group.items.push({ itemId: item.itemId, x: item.x, z: item.z, dist: dx * dx + dz * dz });
+      }
+
+      const items: { objectTypeId: string; name: string; quantity: number; nearest: { itemId: string; x: number; z: number } }[] = [];
+      for (const [objectTypeId, group] of groups) {
+        group.items.sort((a, b) => a.dist - b.dist);
+        const near = group.items[0];
+        items.push({
+          objectTypeId,
+          name: group.name,
+          quantity: group.items.length,
+          nearest: { itemId: near.itemId, x: near.x, z: near.z },
+        });
+      }
+
+      return { ok: true, agents, items };
+    }
+
     case "world-discoveries": {
       return { ok: true, objectTypes: objectRegistry.getAll() };
+    }
+
+    case "dismiss-announcement": {
+      const a = args as { agentId: string };
+      agentAnnouncementState.delete(a.agentId);
+      return { ok: true };
     }
 
     case "describe": {

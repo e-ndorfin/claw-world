@@ -358,7 +358,8 @@ async function loadActivityFeed(): Promise<void> {
     }
     // Load the most recent (first) file
     await loadFeedEvents(files[0]);
-  } catch {
+  } catch (err) {
+    console.error("[feed] loadActivityFeed failed:", err);
     eventList.innerHTML = '<div class="feed-empty">Failed to load events</div>';
   }
 }
@@ -369,8 +370,9 @@ async function loadFeedEvents(filename: string): Promise<void> {
     const data = await res.json();
     allEvents = data.events ?? [];
     renderFeed();
-  } catch {
-    // keep existing events
+  } catch (err) {
+    console.error("[feed] loadFeedEvents failed:", err);
+    renderFeed();
   }
 }
 
@@ -392,7 +394,7 @@ function renderFeed(): void {
       (ev) => `<div class="event-row">
       <span class="event-time">${formatTime(ev.ts)}</span>
       <span class="event-badge badge-${ev.type}">${ev.type}</span>
-      <span class="event-agent" title="${escapeHtml(ev.agentId)}">${escapeHtml(ev.agentId)}</span>
+      <span class="event-agent" title="${escapeHtml(ev.agentId ?? "")}">${escapeHtml(ev.agentId ?? "")}</span>
       <span class="event-summary">${getEventSummary(ev)}</span>
     </div>`
     )
@@ -413,8 +415,8 @@ function startLivePolling(): void {
         // auto-scroll to top (newest first)
         eventList.scrollTop = 0;
       }
-    } catch {
-      // retry next interval
+    } catch (err) {
+      console.error("[feed] live poll failed:", err);
     }
   }, 2000);
 }
@@ -537,11 +539,30 @@ function updateAgentList(): void {
 // ── Broadcast Panel ──────────────────────────────────────────
 
 function initBroadcastPanel(): void {
-  broadcastSendBtn.addEventListener("click", () => {
+  broadcastSendBtn.addEventListener("click", async () => {
     const text = broadcastInput.value.trim();
     if (!text) return;
-    showToast("Not implemented yet");
-    broadcastInput.value = "";
+    const token = getToken();
+    if (!token) return showToast("Not authenticated");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/broadcast`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        broadcastInput.value = "";
+        showToast("Broadcast sent");
+      } else {
+        showToast(data.error || "Broadcast failed");
+      }
+    } catch {
+      showToast("Failed to send broadcast");
+    }
   });
 
   broadcastInput.addEventListener("keydown", (e) => {
@@ -550,8 +571,27 @@ function initBroadcastPanel(): void {
     }
   });
 
-  rallyBtn.addEventListener("click", () => {
-    showToast("Not implemented yet");
+  rallyBtn.addEventListener("click", async () => {
+    const token = getToken();
+    if (!token) return showToast("Not authenticated");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/rally`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ x: 0, z: 0 }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(`Rallied ${data.moved} agent${data.moved !== 1 ? "s" : ""} to origin`);
+      } else {
+        showToast(data.error || "Rally failed");
+      }
+    } catch {
+      showToast("Failed to rally agents");
+    }
   });
 }
 
