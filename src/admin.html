@@ -29,9 +29,52 @@
         <button id="logout-btn">Logout</button>
       </div>
     </header>
-    <main>
-      <p class="placeholder">Console ready. Features coming soon.</p>
-    </main>
+    <div class="dashboard">
+      <!-- Left column: Activity Feed -->
+      <div id="activity-feed">
+        <div class="feed-header">
+          <h2>Live Activity Feed</h2>
+          <select id="feed-type-filter">
+            <option value="">All Types</option>
+            <option value="chat">Chat</option>
+            <option value="join">Join</option>
+            <option value="leave">Leave</option>
+            <option value="action">Action</option>
+            <option value="emote">Emote</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div id="event-list"></div>
+      </div>
+
+      <!-- Right column -->
+      <div class="right-column">
+        <div id="minimap-container">
+          <h3>Minimap</h3>
+          <canvas id="minimap" width="200" height="200"></canvas>
+        </div>
+
+        <div id="agent-list-container">
+          <h3>Agents</h3>
+          <div id="agent-list"></div>
+        </div>
+
+        <div id="broadcast-panel">
+          <h3>Broadcast & Events</h3>
+          <div class="broadcast-row">
+            <input type="text" id="broadcast-input" placeholder="Broadcast message..." />
+            <button id="broadcast-send-btn">Send</button>
+          </div>
+          <button id="rally-btn" class="rally-btn">Rally to Origin (0,0)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="status-bar">
+      <span id="connection-status"><span class="status-dot disconnected"></span> Disconnected</span>
+      <span id="agent-count">0 agents</span>
+    </div>
   </div>
 
   <script type="module" src="./admin.ts"></script>
