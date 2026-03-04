@@ -92,7 +92,7 @@ Respond with ONLY the JSON object, no other text.`;
         "Authorization": `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: "openai/gpt-4.1-nano",
+        model: process.env.OBJECT_CREATION_MODEL ?? "openai/gpt-5-nano",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         max_tokens: 200,

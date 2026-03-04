@@ -55,6 +55,21 @@ let currentAnnouncement = "";
 let announcementTs = 0;
 const agentAnnouncementState = new Map<string, { seenAt: number; callCount: number }>();
 
+function broadcastAnnouncement(text: string): void {
+  currentAnnouncement = text.slice(0, 500);
+  announcementTs = Date.now();
+  agentAnnouncementState.clear();
+  // Include both agents with positions and registered-but-still-joining agents
+  for (const id of state.getActiveAgentIds()) {
+    agentAnnouncementState.set(id, { seenAt: 0, callCount: -1 });
+  }
+  for (const p of registry.getOnline()) {
+    if (!agentAnnouncementState.has(p.agentId)) {
+      agentAnnouncementState.set(p.agentId, { seenAt: 0, callCount: -1 });
+    }
+  }
+}
+
 // ── Room info ──────────────────────────────────────────────────
 
 const getRoomInfo = createRoomInfoGetter(
@@ -100,7 +115,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 // ── OpenRouter helpers ──────────────────────────────────────────
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "anthropic/claude-opus-4.6";
+const OPENROUTER_MODEL = process.env.THREEJS_MODEL ?? "anthropic/claude-opus-4.6";
 
 async function callOpenRouter(systemPrompt: string, userPrompt: string): Promise<string> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -466,9 +481,7 @@ Requirements:
       const body = (await readBody(req)) as { text?: string };
       const text = body?.text?.trim();
       if (!text) return json(res, 400, { ok: false, error: "text required" });
-      currentAnnouncement = text.slice(0, 500);
-      announcementTs = Date.now();
-      agentAnnouncementState.clear();
+      broadcastAnnouncement(text);
       return json(res, 200, { ok: true });
     } catch (err) {
       return json(res, 400, { ok: false, error: String(err) });
@@ -496,9 +509,7 @@ Requirements:
         commandQueue.enqueue(msg);
         moved++;
       }
-      currentAnnouncement = `All agents have been rallied to (${x}, ${z})`;
-      announcementTs = Date.now();
-      agentAnnouncementState.clear();
+      broadcastAnnouncement(`All agents have been rallied to (${x}, ${z})`);
       return json(res, 200, { ok: true, moved });
     } catch (err) {
       return json(res, 400, { ok: false, error: String(err) });
@@ -515,16 +526,22 @@ Requirements:
       // Inject announcement into IPC responses (skip dismiss-announcement itself)
       const agentId = (parsed.args as Record<string, unknown> | undefined)?.agentId as string | undefined;
       const command = parsed.command as string | undefined;
-      if (agentId && currentAnnouncement && command !== "dismiss-announcement") {
+      if (agentId && currentAnnouncement && command !== "dismiss-announcement" && command !== "register") {
         const agentState = agentAnnouncementState.get(agentId);
-        if (!agentState) {
-          // First time this agent sees the announcement
-          response.announcement = `NEW ANNOUNCEMENT: ${currentAnnouncement}`;
-          agentAnnouncementState.set(agentId, { seenAt: Date.now(), callCount: 0 });
-        } else {
-          agentState.callCount++;
-          if (agentState.callCount % 3 === 0) {
-            response.announcement = `Remember the announcement: ${currentAnnouncement}. If you have accomplished the goal outlined in the announcement, you can run dismiss-announcement.`;
+        if (agentState) {
+          if (command === "room-events") {
+            // Always show raw announcement on room-events if agent is in map
+            response.announcement = currentAnnouncement;
+          } else if (agentState.callCount === -1) {
+            // First time seeing the announcement
+            response.announcement = `NEW ANNOUNCEMENT: ${currentAnnouncement}`;
+            agentState.callCount = 0;
+          } else {
+            agentState.callCount++;
+            if (agentState.callCount % 3 === 0) {
+              // Periodic reminder
+              response.announcement = `Remember the announcement: ${currentAnnouncement}. If you have accomplished the goal outlined in the announcement, you can run dismiss-announcement.`;
+            }
           }
         }
       }
@@ -672,6 +689,10 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
         timestamp: Date.now(),
       };
       commandQueue.enqueue(joinMsg);
+
+      if (currentAnnouncement) {
+        agentAnnouncementState.set(profile.agentId, { seenAt: 0, callCount: -1 });
+      }
 
       // Assign starting objects if agent has no knowledge yet
       if (itemState.getKnowledge(profile.agentId).length === 0) {
