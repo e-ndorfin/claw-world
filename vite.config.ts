@@ -17,6 +17,18 @@ export default defineConfig({
       },
     },
   },
+  plugins: [
+    {
+      name: "rewrite-html-pages",
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if (req.url === "/admin") req.url = "/admin.html";
+          if (req.url === "/logs") req.url = "/logs.html";
+          next();
+        });
+      },
+    },
+  ],
   build: {
     outDir: resolve(__dirname, "dist"),
     emptyOutDir: true,
@@ -24,6 +36,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "src/index.html"),
         logs: resolve(__dirname, "src/logs.html"),
+        admin: resolve(__dirname, "src/admin.html"),
       },
     },
   },

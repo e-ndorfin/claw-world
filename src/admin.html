@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw World — Master Console</title>
+  <link rel="stylesheet" href="./admin.css" />
+</head>
+<body>
+  <div id="login-screen">
+    <div class="login-card">
+      <h1>Master Console</h1>
+      <p>Enter the admin password to continue.</p>
+      <form id="login-form">
+        <input type="password" id="password-input" placeholder="Admin password" autocomplete="current-password" />
+        <button type="submit">Login</button>
+      </form>
+      <p id="login-error" class="error hidden"></p>
+    </div>
+  </div>
+
+  <div id="admin-panel" class="hidden">
+    <header>
+      <div class="header-left">
+        <h1>Master Console</h1>
+        <a href="/" class="back-link">← Back to World</a>
+      </div>
+      <div class="header-right">
+        <button id="logout-btn">Logout</button>
+      </div>
+    </header>
+    <main>
+      <p class="placeholder">Console ready. Features coming soon.</p>
+    </main>
+  </div>
+
+  <script type="module" src="./admin.ts"></script>
+</body>
+</html>

@@ -12,6 +12,7 @@ import { ClientManager } from "./client-manager.js";
 import { GameLoop, TICK_RATE } from "./game-loop.js";
 import { loadRoomConfig } from "./room-config.js";
 import { createRoomInfoGetter } from "./room-info.js";
+import { createAdminSession, validateAdminSession } from "./admin-auth.js";
 import type { WorldMessage, JoinMessage, AgentSkillDeclaration } from "./types.js";
 
 // ── Room configuration ────────────────────────────────────────
@@ -82,6 +83,14 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+// ── Admin auth helper ───────────────────────────────────────────
+
+function requireAdmin(req: IncomingMessage): boolean {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader?.startsWith("Bearer ")) return false;
+  return validateAdminSession(authHeader.slice(7));
+}
+
 // ── HTTP server ─────────────────────────────────────────────────
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -93,7 +102,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
     });
     res.end();
     return;
@@ -286,6 +295,31 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     }
   }
 
+  // ── Admin API ──────────────────────────────────────────────
+  if (url === "/api/admin/login" && method === "POST") {
+    try {
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (!adminPassword) {
+        return json(res, 403, { ok: false, error: "Admin console not configured" });
+      }
+      const body = (await readBody(req)) as { password?: string };
+      if (!body?.password || body.password !== adminPassword) {
+        return json(res, 401, { ok: false, error: "Invalid password" });
+      }
+      const token = createAdminSession();
+      return json(res, 200, { ok: true, token });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url === "/api/admin/status" && method === "GET") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    return json(res, 200, { ok: true });
+  }
+
   // ── IPC JSON API (agent commands — go through command queue) ─
   if (method === "POST" && (url === "/" || url === "/ipc")) {
     try {
@@ -325,6 +359,8 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       filePath = join(DIST_DIR, "index.html");
     } else if (url === "/logs" || url === "/logs.html") {
       filePath = join(DIST_DIR, "logs.html");
+    } else if (url === "/admin" || url === "/admin.html") {
+      filePath = join(DIST_DIR, "admin.html");
     } else {
       filePath = join(DIST_DIR, url.split("?")[0]);
     }
