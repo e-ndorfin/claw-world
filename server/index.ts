@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { resolve, join, extname } from "node:path";
@@ -13,7 +14,12 @@ import { GameLoop, TICK_RATE } from "./game-loop.js";
 import { loadRoomConfig } from "./room-config.js";
 import { createRoomInfoGetter } from "./room-info.js";
 import { createAdminSession, validateAdminSession } from "./admin-auth.js";
-import type { WorldMessage, JoinMessage, AgentSkillDeclaration } from "./types.js";
+import { ObjectRegistry } from "./object-registry.js";
+import { ItemState } from "./item-state.js";
+import { CraftEngine } from "./craft-engine.js";
+import { objectCache } from "./object-cache.js";
+import type { WorldMessage, JoinMessage, AgentSkillDeclaration, ItemSpawnMessage, ItemPickupMessage, ItemDropMessage, ItemCraftMessage, ItemDespawnMessage } from "./types.js";
+import { ITEM_PICKUP_RADIUS } from "./types.js";
 
 // ── Room configuration ────────────────────────────────────────
 
@@ -26,6 +32,9 @@ const registry = new AgentRegistry();
 const state = new WorldState(registry);
 const nostr = new NostrWorld(RELAYS, config.roomId, config.roomName);
 const clawhub = new ClawhubStore();
+const objectRegistry = new ObjectRegistry();
+const itemState = new ItemState();
+const craftEngine = new CraftEngine();
 
 // ── Game engine services ────────────────────────────────────────
 
@@ -39,7 +48,7 @@ commandQueue.setObstacles([
   { x: 0, z: -35, radius: 5 },    // Worlds Portal
 ]);
 
-const gameLoop = new GameLoop(state, spatialGrid, commandQueue, clientManager, nostr);
+const gameLoop = new GameLoop(state, spatialGrid, commandQueue, clientManager, nostr, itemState, objectRegistry);
 
 // ── Room info ──────────────────────────────────────────────────
 
@@ -81,6 +90,53 @@ function json(res: ServerResponse, status: number, data: unknown): void {
     "Access-Control-Allow-Origin": "*",
   });
   res.end(JSON.stringify(data));
+}
+
+// ── OpenRouter helpers ──────────────────────────────────────────
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "anthropic/claude-opus-4.6";
+
+async function callOpenRouter(systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://github.com/e-ndorfin/claw-world",
+      "X-OpenRouter-Title": "OpenClaw World",
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: 2048,
+      temperature: 0.7,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenRouter error ${res.status}: ${text}`);
+  }
+  const data = await res.json() as { choices: { message: { content: string } }[] };
+  return data.choices[0].message.content.trim();
+}
+
+function stripCodeFences(code: string): string {
+  let cleaned = code.trim();
+  // Remove wrapping markdown code fences (possibly with language tag)
+  const fenceMatch = cleaned.match(/^```[\w]*\s*\n?([\s\S]*?)\n?\s*```$/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+  // Remove any function wrapper like `function createX(THREE) { ... }`
+  const funcMatch = cleaned.match(/^(?:function\s+\w+\s*\(\s*THREE\s*\)\s*\{)([\s\S]*)\}\s*$/);
+  if (funcMatch) {
+    cleaned = funcMatch[1].trim();
+  }
+  return cleaned;
 }
 
 // ── Admin auth helper ───────────────────────────────────────────
@@ -183,6 +239,100 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       return json(res, 200, { ok: true, data });
     } catch (err) {
       return json(res, 502, { ok: false, error: `Could not reach clawhub.ai: ${String(err)}` });
+    }
+  }
+
+  // ── REST API: Generate 3D object via LLM ───────────────────
+  if (url === "/api/generate-object" && method === "POST") {
+    if (!OPENROUTER_API_KEY) {
+      return json(res, 503, { ok: false, error: "OPENROUTER_API_KEY not configured" });
+    }
+    try {
+      const body = (await readBody(req)) as { prompt?: string };
+      if (!body?.prompt || typeof body.prompt !== "string") {
+        return json(res, 400, { ok: false, error: "prompt required" });
+      }
+
+      const key = body.prompt.toLowerCase().trim();
+
+      // Cache check
+      const cached = objectCache.get(key);
+      if (cached) {
+        return json(res, 200, { ok: true, name: cached.name, code: cached.code });
+      }
+
+      const codeSystemPrompt = `You are a Three.js code generator. Generate ONLY a JavaScript function body that creates a 3D representation of a given object.
+
+Requirements:
+- The code receives THREE as a parameter (do NOT import it)
+- Create a THREE.Group, add meshes to it, and return the group
+- Use THREE.MeshStandardMaterial with appropriate colors
+- The entire object should fit within a 2x2x2 bounding box centered at origin
+- Make it visually recognizable for what it represents
+- Use basic geometries: BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, IcosahedronGeometry, etc.
+- You can combine multiple geometries for more complex shapes
+- NO comments, NO console.log, NO markdown formatting, NO function declaration wrapper
+- Return ONLY the raw JavaScript code starting with "const group = new THREE.Group();" and ending with "return group;"`;
+
+      let code = await callOpenRouter(codeSystemPrompt, `Create a 3D mesh for: ${body.prompt}`);
+      code = stripCodeFences(code);
+
+      // Validate: must parse as a function body
+      try {
+        new Function("THREE", code);
+      } catch (parseErr) {
+        console.warn("[generate-object] Code failed to parse, retrying with simpler prompt…");
+        console.warn("[generate-object] Bad code was:", code.slice(0, 300));
+        code = await callOpenRouter(
+          codeSystemPrompt,
+          `Create a very simple 3D mesh for: ${body.prompt}. Use only ONE geometry and ONE material. Keep it as simple as possible.`,
+        );
+        code = stripCodeFences(code);
+
+        try {
+          new Function("THREE", code);
+        } catch {
+          // Ultimate fallback — blue sphere
+          code = [
+            'const group = new THREE.Group();',
+            'const geo = new THREE.SphereGeometry(0.5, 16, 16);',
+            'const mat = new THREE.MeshStandardMaterial({ color: 0x88aacc });',
+            'group.add(new THREE.Mesh(geo, mat));',
+            'return group;',
+          ].join("\n");
+        }
+      }
+
+      objectCache.set(key, body.prompt, code);
+      return json(res, 200, { ok: true, name: body.prompt, code });
+    } catch (err) {
+      console.error("[generate-object] Error:", err);
+      return json(res, 500, { ok: false, error: String(err) });
+    }
+  }
+
+  // ── REST API: Poly Pizza model search (proxy to poly.pizza) ─
+  if (url.startsWith("/api/polypizza/search/") && method === "GET") {
+    try {
+      const keyword = decodeURIComponent(url.slice("/api/polypizza/search/".length).split("?")[0]);
+      if (!keyword || keyword.length > 100) {
+        return json(res, 400, { ok: false, error: "Invalid search keyword" });
+      }
+      const apiKey = process.env.POLYPIZZA_API_KEY;
+      if (!apiKey) {
+        return json(res, 503, { ok: false, error: "POLYPIZZA_API_KEY not configured" });
+      }
+      const upstream = await fetch(
+        `https://api.poly.pizza/v1.1/search/${encodeURIComponent(keyword)}`,
+        { headers: { "X-Auth-Token": apiKey, "Accept": "application/json" }, signal: AbortSignal.timeout(8000) }
+      );
+      if (!upstream.ok) {
+        return json(res, 502, { ok: false, error: `poly.pizza returned ${upstream.status}` });
+      }
+      const data = await upstream.json() as Record<string, unknown>;
+      return json(res, 200, { ok: true, ...data });
+    } catch (err) {
+      return json(res, 502, { ok: false, error: `Could not reach poly.pizza: ${String(err)}` });
     }
   }
 
@@ -418,6 +568,7 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
   // Commands that require a registered agentId
   const agentCommands = new Set([
     "world-move", "world-action", "world-chat", "world-emote", "world-leave",
+    "world-spawn", "world-pickup", "world-drop", "world-craft", "world-inventory",
   ]);
   if (agentCommands.has(command)) {
     const agentId = (args as { agentId?: string })?.agentId;
@@ -466,11 +617,27 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
       };
       commandQueue.enqueue(joinMsg);
 
+      // Assign starting objects if agent has no knowledge yet
+      if (itemState.getKnowledge(profile.agentId).length === 0) {
+        const baseIds = objectRegistry.getBaseObjectIds();
+        const onlineIds = state.getActiveAgentIds();
+        const assigned = itemState.getAssignedBaseObjects(onlineIds);
+
+        // Pick 2 unassigned base objects, or random if all assigned
+        const unassigned = baseIds.filter((id) => !assigned.has(id));
+        const pool = unassigned.length >= 2 ? unassigned : baseIds;
+
+        // Shuffle and pick 2
+        const shuffled = [...pool].sort(() => Math.random() - 0.5);
+        itemState.initKnowledge(profile.agentId, shuffled.slice(0, 2));
+      }
+
       const baseUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
       const previewUrl = `${baseUrl}/?agent=${encodeURIComponent(profile.agentId)}`;
       return {
         ok: true,
         profile,
+        knownObjects: itemState.getKnowledge(profile.agentId),
         previewUrl,
         ipcUrl: `${baseUrl}/ipc`,
       };
@@ -553,6 +720,24 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
     case "world-leave": {
       const a = args as { agentId: string };
       if (!a?.agentId) throw new Error("agentId required");
+
+      // Drop all held items at agent's last position
+      const leavePos = state.getPosition(a.agentId);
+      if (leavePos) {
+        const dropped = itemState.dropAllItems(a.agentId, leavePos.x, leavePos.z);
+        for (const item of dropped) {
+          const dropMsg: ItemDropMessage = {
+            worldType: "item-drop",
+            agentId: a.agentId,
+            itemId: item.itemId,
+            x: item.x,
+            z: item.z,
+            timestamp: Date.now(),
+          };
+          commandQueue.enqueue(dropMsg);
+        }
+      }
+
       const msg: WorldMessage = {
         worldType: "leave",
         agentId: a.agentId,
@@ -634,6 +819,218 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
         }
       }
       return { ok: true, directory };
+    }
+
+    // ── Crafting IPC commands ──────────────────────────────────
+
+    case "world-spawn": {
+      const a = args as { agentId: string; objectTypeId: string };
+      if (!a?.agentId || !a?.objectTypeId) throw new Error("agentId and objectTypeId required");
+      if (!itemState.hasKnowledge(a.agentId, a.objectTypeId)) {
+        return { ok: false, error: "You don't know how to create that object", knownObjects: itemState.getKnowledge(a.agentId) };
+      }
+      const objType = objectRegistry.get(a.objectTypeId);
+      if (!objType) return { ok: false, error: "Unknown object type" };
+
+      const pos = state.getPosition(a.agentId);
+      if (!pos) return { ok: false, error: "Agent not in world" };
+
+      const itemId = `item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const x = pos.x + (Math.random() - 0.5) * 2;
+      const z = pos.z + (Math.random() - 0.5) * 2;
+
+      itemState.spawnItem(itemId, a.objectTypeId, x, z);
+
+      const msg: ItemSpawnMessage = {
+        worldType: "item-spawn",
+        agentId: a.agentId,
+        itemId,
+        objectTypeId: a.objectTypeId,
+        name: objType.name,
+        color: objType.color,
+        x,
+        z,
+        timestamp: Date.now(),
+      };
+      commandQueue.enqueue(msg);
+      return { ok: true, itemId, name: objType.name, x, z };
+    }
+
+    case "world-pickup": {
+      const a = args as { agentId: string; itemId: string };
+      if (!a?.agentId || !a?.itemId) throw new Error("agentId and itemId required");
+
+      const item = itemState.getItem(a.itemId);
+      if (!item) return { ok: false, error: "Item not found" };
+      if (item.heldBy) return { ok: false, error: "Item is already held by another agent" };
+
+      const pos = state.getPosition(a.agentId);
+      if (!pos) return { ok: false, error: "Agent not in world" };
+
+      // Check proximity
+      const dx = pos.x - item.x;
+      const dz = pos.z - item.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > ITEM_PICKUP_RADIUS) {
+        return { ok: false, error: "Too far from item", walkTo: { x: item.x, z: item.z }, distance: dist };
+      }
+
+      const result = itemState.pickupItem(a.agentId, a.itemId);
+      if (!result.ok) return result;
+
+      const objType = objectRegistry.get(item.objectTypeId);
+      const msg: ItemPickupMessage = {
+        worldType: "item-pickup",
+        agentId: a.agentId,
+        itemId: a.itemId,
+        slot: result.slot!,
+        timestamp: Date.now(),
+      };
+      commandQueue.enqueue(msg);
+      return { ok: true, slot: result.slot, objectTypeId: item.objectTypeId, name: objType?.name };
+    }
+
+    case "world-drop": {
+      const a = args as { agentId: string; slot: number };
+      if (!a?.agentId || a?.slot === undefined) throw new Error("agentId and slot required");
+      const slot = a.slot as 0 | 1;
+      if (slot !== 0 && slot !== 1) return { ok: false, error: "slot must be 0 or 1" };
+
+      const pos = state.getPosition(a.agentId);
+      if (!pos) return { ok: false, error: "Agent not in world" };
+
+      const x = pos.x + (Math.random() - 0.5) * 2;
+      const z = pos.z + (Math.random() - 0.5) * 2;
+      const dropped = itemState.dropItem(a.agentId, slot, x, z);
+      if (!dropped) return { ok: false, error: "Nothing in that slot" };
+
+      const msg: ItemDropMessage = {
+        worldType: "item-drop",
+        agentId: a.agentId,
+        itemId: dropped.itemId,
+        x,
+        z,
+        timestamp: Date.now(),
+      };
+      commandQueue.enqueue(msg);
+      return { ok: true, itemId: dropped.itemId, x, z };
+    }
+
+    case "world-craft": {
+      const a = args as { agentId: string };
+      if (!a?.agentId) throw new Error("agentId required");
+
+      const inv = itemState.getInventory(a.agentId);
+      if (!inv[0] || !inv[1]) {
+        return { ok: false, error: "Both inventory slots must be filled to craft" };
+      }
+
+      const consumed = itemState.craftConsume(a.agentId);
+      if (!consumed) return { ok: false, error: "Failed to consume inventory items" };
+
+      const type1 = objectRegistry.get(consumed.item1.objectTypeId);
+      const type2 = objectRegistry.get(consumed.item2.objectTypeId);
+      if (!type1 || !type2) return { ok: false, error: "Unknown object types" };
+
+      // Check for existing recipe
+      let resultType = objectRegistry.findByRecipe(consumed.item1.objectTypeId, consumed.item2.objectTypeId);
+      let isNewDiscovery = false;
+
+      if (!resultType) {
+        // Call LLM to determine result
+        const existingNames = objectRegistry.getAllArray().map((t) => t.name);
+        const result = await craftEngine.combine(type1.name, type2.name, existingNames);
+
+        const objectTypeId = result.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        isNewDiscovery = true;
+
+        resultType = {
+          objectTypeId,
+          name: result.name,
+          recipe: [consumed.item1.objectTypeId, consumed.item2.objectTypeId],
+          discoveredBy: a.agentId,
+          discoveredAt: Date.now(),
+          color: result.color,
+        };
+        objectRegistry.register(resultType);
+      }
+
+      // Add knowledge to the crafting agent only
+      itemState.addKnowledge(a.agentId, resultType.objectTypeId);
+
+      // Create result item at agent's feet
+      const pos = state.getPosition(a.agentId);
+      const x = (pos?.x ?? 0) + (Math.random() - 0.5) * 2;
+      const z = (pos?.z ?? 0) + (Math.random() - 0.5) * 2;
+      const resultItemId = `item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      itemState.spawnItem(resultItemId, resultType.objectTypeId, x, z);
+
+      // Enqueue despawn messages for consumed items
+      const despawn1: ItemDespawnMessage = {
+        worldType: "item-despawn",
+        itemId: consumed.item1.itemId,
+        timestamp: Date.now(),
+      };
+      const despawn2: ItemDespawnMessage = {
+        worldType: "item-despawn",
+        itemId: consumed.item2.itemId,
+        timestamp: Date.now(),
+      };
+      commandQueue.enqueue(despawn1);
+      commandQueue.enqueue(despawn2);
+
+      // Enqueue craft message
+      const craftMsg: ItemCraftMessage = {
+        worldType: "item-craft",
+        agentId: a.agentId,
+        consumed: [consumed.item1.itemId, consumed.item2.itemId],
+        ingredient1Name: type1.name,
+        ingredient2Name: type2.name,
+        resultItemId,
+        resultObjectTypeId: resultType.objectTypeId,
+        resultName: resultType.name,
+        resultColor: resultType.color,
+        isNewDiscovery,
+        x,
+        z,
+        timestamp: Date.now(),
+      };
+      commandQueue.enqueue(craftMsg);
+
+      return {
+        ok: true,
+        result: resultType,
+        resultItemId,
+        isNewDiscovery,
+        x,
+        z,
+        knownObjects: itemState.getKnowledge(a.agentId),
+      };
+    }
+
+    case "world-inventory": {
+      const a = args as { agentId: string };
+      if (!a?.agentId) throw new Error("agentId required");
+      const inv = itemState.getInventory(a.agentId);
+      const slots = inv.map((itemId) => {
+        if (!itemId) return null;
+        const item = itemState.getItem(itemId);
+        if (!item) return null;
+        const objType = objectRegistry.get(item.objectTypeId);
+        return { itemId, objectTypeId: item.objectTypeId, name: objType?.name ?? item.objectTypeId };
+      });
+      return {
+        ok: true,
+        inventory: slots,
+        knownObjects: itemState.getKnowledge(a.agentId).map((id) => {
+          const t = objectRegistry.get(id);
+          return { objectTypeId: id, name: t?.name ?? id };
+        }),
+      };
+    }
+
+    case "world-discoveries": {
+      return { ok: true, objectTypes: objectRegistry.getAll() };
     }
 
     case "describe": {
