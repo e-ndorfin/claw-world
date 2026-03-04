@@ -324,31 +324,6 @@ Requirements:
     }
   }
 
-  // ── REST API: Poly Pizza model search (proxy to poly.pizza) ─
-  if (url.startsWith("/api/polypizza/search/") && method === "GET") {
-    try {
-      const keyword = decodeURIComponent(url.slice("/api/polypizza/search/".length).split("?")[0]);
-      if (!keyword || keyword.length > 100) {
-        return json(res, 400, { ok: false, error: "Invalid search keyword" });
-      }
-      const apiKey = process.env.POLYPIZZA_API_KEY;
-      if (!apiKey) {
-        return json(res, 503, { ok: false, error: "POLYPIZZA_API_KEY not configured" });
-      }
-      const upstream = await fetch(
-        `https://api.poly.pizza/v1.1/search/${encodeURIComponent(keyword)}`,
-        { headers: { "X-Auth-Token": apiKey, "Accept": "application/json" }, signal: AbortSignal.timeout(8000) }
-      );
-      if (!upstream.ok) {
-        return json(res, 502, { ok: false, error: `poly.pizza returned ${upstream.status}` });
-      }
-      const data = await upstream.json() as Record<string, unknown>;
-      return json(res, 200, { ok: true, ...data });
-    } catch (err) {
-      return json(res, 502, { ok: false, error: `Could not reach poly.pizza: ${String(err)}` });
-    }
-  }
-
   // ── REST API: Clawhub (local plugins) ──────────────────────
   if (url === "/api/clawhub/skills" && method === "GET") {
     return json(res, 200, { ok: true, skills: clawhub.list() });
