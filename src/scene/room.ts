@@ -162,9 +162,6 @@ export function createScene() {
     (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.9 })
   );
 
-  // Store obstacle data for collision avoidance
-  const obstacles: { x: number; z: number; radius: number }[] = [];
-
   for (let i = 0; i < 20; i++) {
     const rock = new THREE.Mesh(rockGeo, rockMaterials[i % rockMaterials.length]);
     const scale = 0.5 + Math.random() * 2;
@@ -175,9 +172,7 @@ export function createScene() {
     rock.rotation.y = Math.random() * Math.PI;
     rock.castShadow = true;
     rock.receiveShadow = true;
-    rock.userData.obstacle = true;
     scene.add(rock);
-    obstacles.push({ x: rx, z: rz, radius: scale + 0.8 });
   }
 
   // ── Floating particles (light sparkles / plankton) ─────────
@@ -216,5 +211,5 @@ export function createScene() {
   // Expose particle animation via scene userData
   scene.userData.animateParticles = animateParticles;
 
-  return { scene, camera, renderer, labelRenderer, controls, clock, obstacles };
+  return { scene, camera, renderer, labelRenderer, controls, clock, obstacles: [] };
 }
