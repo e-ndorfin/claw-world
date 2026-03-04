@@ -89,6 +89,14 @@ export class WorldState {
       case "emote":
         this.registry.touch(msg.agentId);
         break;
+
+      // Item events are recorded in history but actual state is managed by ItemState
+      case "item-spawn":
+      case "item-pickup":
+      case "item-drop":
+      case "item-craft":
+      case "item-despawn":
+        break;
     }
   }
 

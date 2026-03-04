@@ -33,8 +33,9 @@ export class CommandQueue {
    * The game loop drains the queue each tick.
    */
   enqueue(msg: WorldMessage): { ok: boolean; reason?: string } {
-    // Rate limit
-    if (!this.checkRate(msg.agentId)) {
+    // Rate limit (skip for messages without agentId, like item-despawn)
+    const agentId = "agentId" in msg ? msg.agentId : undefined;
+    if (agentId && !this.checkRate(agentId)) {
       return { ok: false, reason: "rate_limited" };
     }
 

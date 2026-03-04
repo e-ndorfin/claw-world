@@ -32,6 +32,32 @@ export interface AgentPosition {
   timestamp: number;
 }
 
+// ── Crafting System Types ──────────────────────────────────────
+
+/** A discovered object type in the global registry */
+export interface ObjectType {
+  objectTypeId: string;
+  name: string;
+  recipe: [string, string] | null;
+  discoveredBy: string | null;
+  discoveredAt: number;
+  color: string;
+  code?: string;
+}
+
+/** A world item instance (placed on the ground or held) */
+export interface WorldItem {
+  itemId: string;
+  objectTypeId: string;
+  x: number;
+  z: number;
+  heldBy: string | null;
+  slot: 0 | 1 | null;
+}
+
+/** Distance within which an agent can pick up an item */
+export const ITEM_PICKUP_RADIUS = 3;
+
 // ── World Messages (kind 42 broadcast) ─────────────────────────
 
 export type WorldMessage =
@@ -41,7 +67,12 @@ export type WorldMessage =
   | ChatMessage
   | JoinMessage
   | LeaveMessage
-  | ProfileMessage;
+  | ProfileMessage
+  | ItemSpawnMessage
+  | ItemPickupMessage
+  | ItemDropMessage
+  | ItemCraftMessage
+  | ItemDespawnMessage;
 
 export interface PositionMessage {
   worldType: "position";
@@ -102,6 +133,59 @@ export interface ProfileMessage {
   timestamp: number;
 }
 
+// ── Item Messages ─────────────────────────────────────────────
+
+export interface ItemSpawnMessage {
+  worldType: "item-spawn";
+  agentId: string;
+  itemId: string;
+  objectTypeId: string;
+  name: string;
+  color: string;
+  x: number;
+  z: number;
+  timestamp: number;
+}
+
+export interface ItemPickupMessage {
+  worldType: "item-pickup";
+  agentId: string;
+  itemId: string;
+  slot: 0 | 1;
+  timestamp: number;
+}
+
+export interface ItemDropMessage {
+  worldType: "item-drop";
+  agentId: string;
+  itemId: string;
+  x: number;
+  z: number;
+  timestamp: number;
+}
+
+export interface ItemCraftMessage {
+  worldType: "item-craft";
+  agentId: string;
+  consumed: [string, string];
+  ingredient1Name: string;
+  ingredient2Name: string;
+  resultItemId: string;
+  resultObjectTypeId: string;
+  resultName: string;
+  resultColor: string;
+  isNewDiscovery: boolean;
+  x: number;
+  z: number;
+  timestamp: number;
+}
+
+export interface ItemDespawnMessage {
+  worldType: "item-despawn";
+  itemId: string;
+  timestamp: number;
+}
+
 // ── Room info ─────────────────────────────────────────────────
 
 export interface RoomInfoMessage {
@@ -120,7 +204,8 @@ export type WSServerMessage =
   | { type: "world"; message: WorldMessage }
   | { type: "profiles"; profiles: AgentProfile[] }
   | { type: "profile"; profile: AgentProfile }
-  | { type: "roomInfo"; info: RoomInfoMessage };
+  | { type: "roomInfo"; info: RoomInfoMessage }
+  | { type: "itemSnapshot"; items: WorldItem[]; objectTypes: Record<string, ObjectType> };
 
 export type WSClientMessage =
   | { type: "subscribe" }

@@ -7,6 +7,8 @@ import type { CommandQueue } from "./command-queue.js";
 import { ClientManager, AOI_RADIUS } from "./client-manager.js";
 import type { WorldMessage, AgentState, WSServerMessage } from "./types.js";
 import type { NostrWorld } from "./nostr-world.js";
+import type { ItemState } from "./item-state.js";
+import type { ObjectRegistry } from "./object-registry.js";
 
 /** Server tick rate in Hz */
 export const TICK_RATE = 20;
@@ -32,6 +34,8 @@ export class GameLoop {
     private commandQueue: CommandQueue,
     private clientManager: ClientManager,
     private nostr: NostrWorld,
+    private itemState?: ItemState,
+    private objectRegistry?: ObjectRegistry,
   ) {
     mkdirSync(LOG_DIR, { recursive: true });
     const date = new Date().toISOString().slice(0, 10);
@@ -45,7 +49,7 @@ export class GameLoop {
         tick: this.tickCount,
         ts: new Date(event.timestamp).toISOString(),
         type: event.worldType,
-        agentId: event.agentId,
+        agentId: "agentId" in event ? event.agentId : undefined,
         data: event,
       });
       appendFileSync(this.logFile, entry + "\n");
@@ -152,6 +156,16 @@ export class GameLoop {
       agents,
     };
     this.safeSend(client.ws, msg);
+
+    // Also send item snapshot
+    if (this.itemState && this.objectRegistry) {
+      const itemMsg: WSServerMessage = {
+        type: "itemSnapshot",
+        items: this.itemState.getAllItems(),
+        objectTypes: this.objectRegistry.getAll(),
+      };
+      this.safeSend(client.ws, itemMsg);
+    }
   }
 
   /** Send only this tick's events that are within client's AOI */
@@ -165,15 +179,16 @@ export class GameLoop {
     );
 
     for (const event of this.tickEvents) {
-      // Events from join/leave/profile/chat/emote are always sent (global)
+      // Events from join/leave/profile/chat/emote/items are always sent (global)
       const isGlobal =
         event.worldType === "join" ||
         event.worldType === "leave" ||
         event.worldType === "profile" ||
         event.worldType === "chat" ||
-        event.worldType === "emote";
+        event.worldType === "emote" ||
+        event.worldType.startsWith("item-");
 
-      if (isGlobal || nearbyAgents.has(event.agentId)) {
+      if (isGlobal || ("agentId" in event && nearbyAgents.has(event.agentId))) {
         const msg: WSServerMessage = { type: "world", message: event };
         this.safeSend(client.ws, msg);
       }

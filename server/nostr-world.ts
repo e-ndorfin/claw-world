@@ -151,9 +151,10 @@ export class NostrWorld {
 
           try {
             const msg = JSON.parse(event.content) as WorldMessage;
-            if (msg.worldType && msg.agentId) {
+            const msgAgentId = "agentId" in msg ? msg.agentId : undefined;
+            if (msg.worldType && msgAgentId) {
               // Only accept messages from known registered agents
-              if (this.isKnownAgent && !this.isKnownAgent(msg.agentId)) {
+              if (this.isKnownAgent && !this.isKnownAgent(msgAgentId)) {
                 return;
               }
               this.onMessage?.(msg);

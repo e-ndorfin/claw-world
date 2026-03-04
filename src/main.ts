@@ -8,8 +8,10 @@ import { setupChatLog } from "./ui/chat-log.js";
 import { setupProfilePanel } from "./ui/profile-panel.js";
 import { setupBuildingPanel } from "./ui/building-panel.js";
 import { setupRoomInfoBar } from "./ui/room-info-bar.js";
+import { ItemManager } from "./scene/item-manager.js";
+import { setupDiscoveryLog } from "./ui/discovery-log.js";
 import * as THREE from "three";
-import type { AgentProfile, AgentState, WorldMessage, RoomInfoMessage } from "../server/types.js";
+import type { AgentProfile, AgentState, WorldMessage, RoomInfoMessage, ObjectType, WorldItem, ItemSpawnMessage, ItemPickupMessage, ItemDropMessage, ItemCraftMessage, ItemDespawnMessage } from "../server/types.js";
 
 // ── Parse URL params ───────────────────────────────────────────
 
@@ -32,8 +34,10 @@ const allObstacles = [...obstacles, ...buildingObstacles];
 
 const lobsterManager = new LobsterManager(scene, allObstacles);
 const effects = new EffectsManager(scene, camera);
+const itemManager = new ItemManager(scene);
 const buildingPanel = setupBuildingPanel(serverParam);
 const roomInfoBar = setupRoomInfoBar();
+const discoveryLog = setupDiscoveryLog();
 
 // ── UI ─────────────────────────────────────────────────────────
 
@@ -160,12 +164,68 @@ ws.on("world", (_raw) => {
         lastSeen: Date.now(),
       });
       break;
+
+    case "item-spawn": {
+      const m = msg as ItemSpawnMessage;
+      itemManager.addItem(m.itemId, m.objectTypeId, m.name, m.color, m.x, m.z);
+      break;
+    }
+
+    case "item-pickup": {
+      const m = msg as ItemPickupMessage;
+      itemManager.removeItem(m.itemId);
+      break;
+    }
+
+    case "item-drop": {
+      const m = msg as ItemDropMessage;
+      // Re-add the item at its new position
+      // We need the object type info — try to get it from the item manager's cache
+      // For now, just remove and let the next snapshot re-add it
+      itemManager.removeItem(m.itemId);
+      break;
+    }
+
+    case "item-craft": {
+      const m = msg as ItemCraftMessage;
+      // Add result item
+      itemManager.addItem(m.resultItemId, m.resultObjectTypeId, m.resultName, m.resultColor, m.x, m.z);
+      if (m.isNewDiscovery) {
+        const agentProfile = overlay.getAgent(m.agentId);
+        const agentName = agentProfile?.name ?? m.agentId;
+        discoveryLog.addDiscovery(agentName, m.resultName, m.ingredient1Name, m.ingredient2Name);
+        chatLog.addSystem(`New discovery: ${m.resultName}!`);
+      }
+      break;
+    }
+
+    case "item-despawn": {
+      const m = msg as ItemDespawnMessage;
+      itemManager.removeItem(m.itemId);
+      break;
+    }
   }
 });
 
 ws.on("profiles", (_raw) => {
   const data = _raw as { profiles: AgentProfile[] };
   overlay.updateAgentList(data.profiles);
+});
+
+// Handle item snapshots from server
+ws.on("itemSnapshot", (_raw) => {
+  const data = _raw as { items: WorldItem[]; objectTypes: Record<string, ObjectType> };
+  itemManager.updateObjectTypes(data.objectTypes);
+  // Clear and re-render all ground items
+  itemManager.clear();
+  for (const item of data.items) {
+    if (!item.heldBy) {
+      const objType = data.objectTypes[item.objectTypeId];
+      if (objType) {
+        itemManager.addItem(item.itemId, item.objectTypeId, objType.name, objType.color, item.x, item.z);
+      }
+    }
+  }
 });
 
 // Handle room info from server
@@ -218,6 +278,13 @@ renderer.domElement.addEventListener("click", (event: MouseEvent) => {
     }
   }
 
+  // Check for item clicks
+  const clickedItemId = itemManager.pick(event, camera, renderer.domElement);
+  if (clickedItemId) {
+    // Focus camera on item
+    return;
+  }
+
   // Then check for lobster clicks
   const agentId = lobsterManager.pick(event, camera, renderer.domElement);
   if (agentId) {
@@ -267,6 +334,7 @@ function animate() {
 
   lobsterManager.update(delta);
   effects.update(camera);
+  itemManager.update(delta);
 
   // Follow agent: smoothly track their position
   if (followAgentId) {
