@@ -11,4 +11,7 @@ clawhub-installed.json
 coverage/
 logs/
 dev/
-test_endpoint.sh
+*.sh
+agent-knowledge.json
+item-state.json
+object-registry.json
