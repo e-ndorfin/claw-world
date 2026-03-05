@@ -16,7 +16,7 @@ import { createRoomInfoGetter } from "./room-info.js";
 import { createAdminSession, validateAdminSession } from "./admin-auth.js";
 import { ObjectRegistry } from "./object-registry.js";
 import { ItemState } from "./item-state.js";
-import { CraftEngine } from "./craft-engine.js";
+import { CraftEngine, generateColor } from "./craft-engine.js";
 import { objectCache } from "./object-cache.js";
 import type { WorldMessage, JoinMessage, PositionMessage, AgentSkillDeclaration, ItemSpawnMessage, ItemPickupMessage, ItemDropMessage, ItemCraftMessage, ItemDespawnMessage } from "./types.js";
 import { ITEM_PICKUP_RADIUS } from "./types.js";
@@ -115,7 +115,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 // ── OpenRouter helpers ──────────────────────────────────────────
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
-const OPENROUTER_MODEL = process.env.THREEJS_MODEL ?? "anthropic/claude-opus-4.6";
+const OPENROUTER_MODEL = process.env.THREEJS_MODEL ?? "anthropic/claude-sonnet-4.6";
 
 async function callOpenRouter(systemPrompt: string, userPrompt: string): Promise<string> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -146,16 +146,27 @@ async function callOpenRouter(systemPrompt: string, userPrompt: string): Promise
 
 function stripCodeFences(code: string): string {
   let cleaned = code.trim();
-  // Remove wrapping markdown code fences (possibly with language tag)
-  const fenceMatch = cleaned.match(/^```[\w]*\s*\n?([\s\S]*?)\n?\s*```$/);
+
+  // Extract code from within markdown fences (handles surrounding text)
+  const fenceMatch = cleaned.match(/```[\w]*\s*\n([\s\S]*?)\n\s*```/);
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();
   }
+
   // Remove any function wrapper like `function createX(THREE) { ... }`
   const funcMatch = cleaned.match(/^(?:function\s+\w+\s*\(\s*THREE\s*\)\s*\{)([\s\S]*)\}\s*$/);
   if (funcMatch) {
     cleaned = funcMatch[1].trim();
   }
+
+  // Last resort: extract from "const group" to "return group;" if buried in prose
+  if (!cleaned.startsWith("const group")) {
+    const bodyMatch = cleaned.match(/(const group\s*=\s*new THREE\.Group[\s\S]*return group;)/);
+    if (bodyMatch) {
+      cleaned = bodyMatch[1].trim();
+    }
+  }
+
   return cleaned;
 }
 
@@ -268,17 +279,21 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       return json(res, 503, { ok: false, error: "OPENROUTER_API_KEY not configured" });
     }
     try {
-      const body = (await readBody(req)) as { prompt?: string };
-      if (!body?.prompt || typeof body.prompt !== "string") {
-        return json(res, 400, { ok: false, error: "prompt required" });
+      const body = (await readBody(req)) as { objectTypeId?: string };
+      if (!body?.objectTypeId || typeof body.objectTypeId !== "string") {
+        return json(res, 400, { ok: false, error: "objectTypeId required" });
       }
 
-      const key = body.prompt.toLowerCase().trim();
+      const objType = objectRegistry.get(body.objectTypeId);
+      if (!objType) {
+        return json(res, 404, { ok: false, error: `Tried to generate object model, but objectTypeId "${body.objectTypeId}" was not found in the registry` });
+      }
+      const name = objType.name;
+      const key = body.objectTypeId;
 
       // Two-tier cache: persisted registry first, then in-memory
-      const registryHit = objectRegistry.findByName(body.prompt);
-      if (registryHit?.code) {
-        return json(res, 200, { ok: true, name: registryHit.name, code: registryHit.code });
+      if (objType.code) {
+        return json(res, 200, { ok: true, name, code: objType.code });
       }
       const cached = objectCache.get(key);
       if (cached) {
@@ -291,14 +306,14 @@ Requirements:
 - The code receives THREE as a parameter (do NOT import it)
 - Create a THREE.Group, add meshes to it, and return the group
 - Use THREE.MeshStandardMaterial with appropriate colors
-- The entire object should fit within a 2x2x2 bounding box centered at origin
+- The entire object should fit within a 10x10x10 bounding box centered at origin
 - Make it visually recognizable for what it represents
 - Use basic geometries: BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, IcosahedronGeometry, etc.
 - You can combine multiple geometries for more complex shapes
 - NO comments, NO console.log, NO markdown formatting, NO function declaration wrapper
 - Return ONLY the raw JavaScript code starting with "const group = new THREE.Group();" and ending with "return group;"`;
 
-      let code = await callOpenRouter(codeSystemPrompt, `Create a 3D mesh for: ${body.prompt}`);
+      let code = await callOpenRouter(codeSystemPrompt, `Create a 3D mesh for: ${name}`);
       code = stripCodeFences(code);
 
       // Validate: must parse as a function body
@@ -309,7 +324,7 @@ Requirements:
         console.warn("[generate-object] Bad code was:", code.slice(0, 300));
         code = await callOpenRouter(
           codeSystemPrompt,
-          `Create a very simple 3D mesh for: ${body.prompt}. Use only ONE geometry and ONE material. Keep it as simple as possible.`,
+          `Create a very simple 3D mesh for: ${name}. Use only ONE geometry and ONE material. Keep it as simple as possible.`,
         );
         code = stripCodeFences(code);
 
@@ -327,12 +342,9 @@ Requirements:
         }
       }
 
-      objectCache.set(key, body.prompt, code);
-      // Persist code to registry if object type exists
-      if (registryHit) {
-        objectRegistry.setCode(registryHit.objectTypeId, code);
-      }
-      return json(res, 200, { ok: true, name: body.prompt, code });
+      objectCache.set(key, name, code);
+      objectRegistry.setCode(body.objectTypeId, code);
+      return json(res, 200, { ok: true, name, code });
     } catch (err) {
       console.error("[generate-object] Error:", err);
       return json(res, 500, { ok: false, error: String(err) });
@@ -511,6 +523,51 @@ Requirements:
       }
       broadcastAnnouncement(`All agents have been rallied to (${x}, ${z})`);
       return json(res, 200, { ok: true, moved });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url === "/api/admin/clear-items" && method === "POST") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    try {
+      const removedIds = itemState.clearAllItems();
+      for (const itemId of removedIds) {
+        const despawn: ItemDespawnMessage = {
+          worldType: "item-despawn",
+          itemId,
+          timestamp: Date.now(),
+        };
+        commandQueue.enqueue(despawn);
+      }
+      return json(res, 200, { ok: true, removed: removedIds.length });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url === "/api/admin/clear-profiles" && method === "POST") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    try {
+      registry.clearAll();
+      return json(res, 200, { ok: true });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err) });
+    }
+  }
+
+  if (url === "/api/admin/clear-progress" && method === "POST") {
+    if (!requireAdmin(req)) {
+      return json(res, 401, { ok: false, error: "Unauthorized" });
+    }
+    try {
+      itemState.clearAllKnowledge();
+      objectRegistry.resetToBase();
+      return json(res, 200, { ok: true });
     } catch (err) {
       return json(res, 400, { ok: false, error: String(err) });
     }
@@ -700,13 +757,13 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
         const onlineIds = state.getActiveAgentIds();
         const assigned = itemState.getAssignedBaseObjects(onlineIds);
 
-        // Pick 2 unassigned base objects, or random if all assigned
+        // Pick 1 unassigned base object, or random if all assigned
         const unassigned = baseIds.filter((id) => !assigned.has(id));
-        const pool = unassigned.length >= 2 ? unassigned : baseIds;
+        const pool = unassigned.length >= 1 ? unassigned : baseIds;
 
-        // Shuffle and pick 2
+        // Shuffle and pick 1
         const shuffled = [...pool].sort(() => Math.random() - 0.5);
-        itemState.initKnowledge(profile.agentId, shuffled.slice(0, 2));
+        itemState.initKnowledge(profile.agentId, shuffled.slice(0, 1));
       }
 
       const baseUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
@@ -1002,35 +1059,47 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
         return { ok: false, error: "Both inventory slots must be filled to craft" };
       }
 
-      const consumed = itemState.craftConsume(a.agentId);
-      if (!consumed) return { ok: false, error: "Failed to consume inventory items" };
+      // Look up item types BEFORE consuming
+      const item1 = itemState.getItem(inv[0]);
+      const item2 = itemState.getItem(inv[1]);
+      if (!item1 || !item2) return { ok: false, error: "Failed to read inventory items" };
 
-      const type1 = objectRegistry.get(consumed.item1.objectTypeId);
-      const type2 = objectRegistry.get(consumed.item2.objectTypeId);
+      const type1 = objectRegistry.get(item1.objectTypeId);
+      const type2 = objectRegistry.get(item2.objectTypeId);
       if (!type1 || !type2) return { ok: false, error: "Unknown object types" };
 
-      // Check for existing recipe
-      let resultType = objectRegistry.findByRecipe(consumed.item1.objectTypeId, consumed.item2.objectTypeId);
+      // Check for existing registered recipe
+      let resultType = objectRegistry.findByRecipe(item1.objectTypeId, item2.objectTypeId);
       let isNewDiscovery = false;
 
       if (!resultType) {
-        // Call LLM to determine result
-        const existingNames = objectRegistry.getAllArray().map((t) => t.name);
-        const result = await craftEngine.combine(type1.name, type2.name, existingNames);
+        // Look up in JSON recipes
+        const recipeResult = craftEngine.lookup(item1.objectTypeId, item2.objectTypeId);
+        if (!recipeResult) {
+          return { ok: false, error: `No known recipe for ${type1.name} + ${type2.name}` };
+        }
 
-        const objectTypeId = result.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-        isNewDiscovery = true;
-
-        resultType = {
-          objectTypeId,
-          name: result.name,
-          recipe: [consumed.item1.objectTypeId, consumed.item2.objectTypeId],
-          discoveredBy: a.agentId,
-          discoveredAt: Date.now(),
-          color: result.color,
-        };
-        objectRegistry.register(resultType);
+        // Check if this element already exists in registry (reachable via different combo)
+        const existing = objectRegistry.get(recipeResult.objectTypeId);
+        if (existing) {
+          resultType = existing;
+        } else {
+          isNewDiscovery = true;
+          resultType = {
+            objectTypeId: recipeResult.objectTypeId,
+            name: recipeResult.name,
+            recipe: [item1.objectTypeId, item2.objectTypeId],
+            discoveredBy: a.agentId,
+            discoveredAt: Date.now(),
+            color: generateColor(recipeResult.name),
+          };
+          objectRegistry.register(resultType);
+        }
       }
+
+      // NOW consume items (recipe is valid)
+      const consumed = itemState.craftConsume(a.agentId);
+      if (!consumed) return { ok: false, error: "Failed to consume inventory items" };
 
       // Add knowledge to the crafting agent only
       itemState.addKnowledge(a.agentId, resultType.objectTypeId);
@@ -1115,7 +1184,6 @@ async function handleCommand(parsed: Record<string, unknown>): Promise<unknown> 
       // Build agent list (exclude calling agent)
       const agents: { agentId: string; name: string; x: number; z: number }[] = [];
       for (const [id, pos] of state.getAllPositions()) {
-        if (id === a.agentId) continue;
         const profile = registry.get(id);
         agents.push({ agentId: id, name: profile?.name ?? id, x: pos.x, z: pos.z });
       }

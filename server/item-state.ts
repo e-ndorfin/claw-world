@@ -174,6 +174,23 @@ export class ItemState {
     return assigned;
   }
 
+  // ── Bulk operations ────────────────────────────────────────
+
+  /** Remove all items and clear all inventories. Returns removed itemIds for despawn broadcasting. */
+  clearAllItems(): string[] {
+    const ids = Array.from(this.items.keys());
+    this.items.clear();
+    this.inventories.clear();
+    this.scheduleSave();
+    return ids;
+  }
+
+  /** Clear all agent knowledge entirely. */
+  clearAllKnowledge(): void {
+    this.knowledge.clear();
+    this.scheduleSave();
+  }
+
   // ── Persistence ─────────────────────────────────────────────
 
   private getOrCreateInventory(agentId: string): [string | null, string | null] {

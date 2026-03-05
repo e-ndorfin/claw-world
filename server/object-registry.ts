@@ -10,12 +10,6 @@ const BASE_OBJECTS: ObjectType[] = [
   { objectTypeId: "water", name: "Water", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#3498db" },
   { objectTypeId: "earth", name: "Earth", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#8b4513" },
   { objectTypeId: "air", name: "Air", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#ecf0f1" },
-  { objectTypeId: "stone", name: "Stone", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#7f8c8d" },
-  { objectTypeId: "wood", name: "Wood", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#a0522d" },
-  { objectTypeId: "sand", name: "Sand", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#f0e68c" },
-  { objectTypeId: "ice", name: "Ice", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#a8d8ea" },
-  { objectTypeId: "lightning", name: "Lightning", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#f1c40f" },
-  { objectTypeId: "moss", name: "Moss", recipe: null, discoveredBy: null, discoveredAt: 0, color: "#27ae60" },
 ];
 
 export { BASE_OBJECTS };
@@ -78,6 +72,16 @@ export class ObjectRegistry {
       t.code = code;
       this.scheduleSave();
     }
+  }
+
+  /** Clear all types and recipes, re-seed only the 4 base objects. */
+  resetToBase(): void {
+    this.types.clear();
+    this.recipeIndex.clear();
+    for (const base of BASE_OBJECTS) {
+      this.types.set(base.objectTypeId, { ...base });
+    }
+    this.scheduleSave();
   }
 
   private recipeKey(a: string, b: string): string {

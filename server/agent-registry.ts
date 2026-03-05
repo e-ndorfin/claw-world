@@ -64,6 +64,12 @@ export class AgentRegistry {
     this.scheduleSave();
   }
 
+  /** Clear all profiles. */
+  clearAll(): void {
+    this.profiles.clear();
+    this.scheduleSave();
+  }
+
   /** Agents seen within last N milliseconds */
   getOnline(withinMs = 5 * 60 * 1000): AgentProfile[] {
     const cutoff = Date.now() - withinMs;

@@ -51,6 +51,9 @@ const broadcastInput = document.getElementById(
 ) as HTMLInputElement;
 const broadcastSendBtn = document.getElementById("broadcast-send-btn")!;
 const rallyBtn = document.getElementById("rally-btn")!;
+const clearItemsBtn = document.getElementById("clear-items-btn")!;
+const clearProgressBtn = document.getElementById("clear-progress-btn")!;
+const clearProfilesBtn = document.getElementById("clear-profiles-btn")!;
 const connectionStatus = document.getElementById("connection-status")!;
 const agentCountEl = document.getElementById("agent-count")!;
 
@@ -172,6 +175,18 @@ function getEventSummary(ev: LogEvent): string {
       return `emoted <b>${escapeHtml(String(d.emote ?? "?"))}</b>`;
     case "profile":
       return `updated profile → ${escapeHtml(String(d.name ?? ""))}`;
+    case "item-spawn":
+      return `spawned <b>${escapeHtml(String(d.name ?? "?"))}</b> at (${Number(d.x ?? 0).toFixed(1)}, ${Number(d.z ?? 0).toFixed(1)})`;
+    case "item-pickup":
+      return `picked up <b>${escapeHtml(String(d.name ?? d.itemId ?? "?"))}</b> → slot ${d.slot ?? "?"}`;
+    case "item-drop":
+      return `dropped <b>${escapeHtml(String(d.name ?? d.itemId ?? "?"))}</b> at (${Number(d.x ?? 0).toFixed(1)}, ${Number(d.z ?? 0).toFixed(1)})`;
+    case "item-craft": {
+      const discovery = d.isNewDiscovery ? " ✨" : "";
+      return `crafted <b>${escapeHtml(String(d.resultName ?? "?"))}</b> from ${escapeHtml(String(d.ingredient1Name ?? "?"))} + ${escapeHtml(String(d.ingredient2Name ?? "?"))}${discovery}`;
+    }
+    case "item-despawn":
+      return `item despawned`;
     default:
       return escapeHtml(JSON.stringify(d).slice(0, 100));
   }
@@ -591,6 +606,66 @@ function initBroadcastPanel(): void {
       }
     } catch {
       showToast("Failed to rally agents");
+    }
+  });
+
+  clearItemsBtn.addEventListener("click", async () => {
+    if (!confirm("Clear ALL items from the world? This cannot be undone.")) return;
+    const token = getToken();
+    if (!token) return showToast("Not authenticated");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clear-items`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(`Cleared ${data.removed} item${data.removed !== 1 ? "s" : ""}`);
+      } else {
+        showToast(data.error || "Failed to clear items");
+      }
+    } catch {
+      showToast("Failed to clear items");
+    }
+  });
+
+  clearProgressBtn.addEventListener("click", async () => {
+    if (!confirm("Reset ALL agent progress and discovered recipes? This cannot be undone.")) return;
+    const token = getToken();
+    if (!token) return showToast("Not authenticated");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clear-progress`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast("Agent progress cleared");
+      } else {
+        showToast(data.error || "Failed to clear progress");
+      }
+    } catch {
+      showToast("Failed to clear progress");
+    }
+  });
+
+  clearProfilesBtn.addEventListener("click", async () => {
+    if (!confirm("Delete ALL agent profiles? This cannot be undone.")) return;
+    const token = getToken();
+    if (!token) return showToast("Not authenticated");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clear-profiles`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast("All profiles cleared");
+      } else {
+        showToast(data.error || "Failed to clear profiles");
+      }
+    } catch {
+      showToast("Failed to clear profiles");
     }
   });
 }

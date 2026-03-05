@@ -5,17 +5,17 @@ import { normalizeVolume, DEFAULT_VOLUME } from "./model-utils.js";
 const cache = new Map<string, string>();
 
 /**
- * Ask the server to generate procedural Three.js code for `prompt`,
+ * Ask the server to generate procedural Three.js code for an object type,
  * then execute it client-side and return a volume-normalized THREE.Group.
  */
 export async function generateModel(
-  prompt: string,
+  objectTypeId: string,
+  name: string,
   opts: { targetVolume?: number; apiBase?: string } = {},
 ): Promise<THREE.Group | null> {
-  const key = prompt.toLowerCase().trim();
-  if (!key) return null;
+  if (!objectTypeId) return null;
 
-  let code = cache.get(key);
+  let code = cache.get(objectTypeId);
 
   if (!code) {
     try {
@@ -23,12 +23,12 @@ export async function generateModel(
       const res = await fetch(`${base}/api/generate-object`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ objectTypeId }),
       });
       const data = await res.json();
       if (!data.ok || !data.code) return null;
       code = data.code as string;
-      cache.set(key, code);
+      cache.set(objectTypeId, code);
     } catch (err) {
       console.error("[generateModel] fetch failed:", err);
       return null;

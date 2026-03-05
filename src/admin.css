@@ -234,7 +234,12 @@ header {
 .badge-position  { background: #3b3520; color: #fcd34d; }
 .badge-action    { background: #4a1d96; color: #c4b5fd; }
 .badge-emote     { background: #831843; color: #f9a8d4; }
-.badge-profile   { background: #1e3a5f; color: #67e8f9; }
+.badge-profile       { background: #1e3a5f; color: #67e8f9; }
+.badge-item-spawn    { background: #064e3b; color: #6ee7b7; }
+.badge-item-pickup   { background: #3b3520; color: #fcd34d; }
+.badge-item-drop     { background: #3b3520; color: #fcd34d; }
+.badge-item-craft    { background: #4a1d96; color: #c4b5fd; }
+.badge-item-despawn  { background: #7f1d1d; color: #fca5a5; }
 
 .event-agent {
   color: #f1f5f9;
@@ -419,6 +424,40 @@ header {
   transition: background 0.15s;
 }
 .rally-btn:hover { background: #334155; }
+
+/* ── World Controls ──────────────────────────────── */
+
+#world-controls {
+  padding: 12px 16px;
+  background: #0f172a;
+  border-top: 1px solid #1e293b;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#world-controls h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.danger-btn {
+  width: 100%;
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #991b1b;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.danger-btn:hover { background: #991b1b; }
 
 /* ── Status Bar ───────────────────────────────────── */
 

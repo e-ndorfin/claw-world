@@ -95,7 +95,7 @@ export class ItemManager {
     this.items.set(itemId, entry);
 
     // Async-load LLM-generated 3D model and swap it in
-    generateModel(name, { targetVolume: ITEM_VOLUME, apiBase: serverBaseUrl })
+    generateModel(objectTypeId, name, { targetVolume: ITEM_VOLUME, apiBase: serverBaseUrl })
       .then((model) => {
         if (!model) return;
         const current = this.items.get(itemId);
