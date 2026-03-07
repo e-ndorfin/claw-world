@@ -16,8 +16,17 @@ export class WorldState {
   /** Total number of events ever written (used to compute readable range) */
   private eventCount = 0;
 
+  /** Listeners notified when a new event is written to the buffer */
+  private eventListeners = new Set<() => void>();
+
   constructor(registry: AgentRegistry) {
     this.registry = registry;
+  }
+
+  /** Subscribe to new events. Returns a cleanup function. */
+  onEvent(listener: () => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   /** Apply a validated world message and update state */
@@ -27,6 +36,8 @@ export class WorldState {
       this.eventBuf[this.eventWriteIdx] = msg;
       this.eventWriteIdx = (this.eventWriteIdx + 1) % EVENT_HISTORY_SIZE;
       this.eventCount++;
+      // Notify poll listeners
+      for (const listener of this.eventListeners) listener();
     }
 
     switch (msg.worldType) {

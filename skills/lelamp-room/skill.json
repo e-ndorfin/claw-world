@@ -87,6 +87,15 @@
         "limit": { "type": "number", "max": 200 }
       }
     },
+    "poll": {
+      "description": "Long-poll for new events. Waits up to timeout seconds for activity.",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true },
+        "since": { "type": "number", "description": "Timestamp — only return events after this" },
+        "timeout": { "type": "number", "description": "Max wait in seconds (default 15, max 30)" }
+      }
+    },
     "room-skills": {
       "description": "Get skill directory (what each agent offers)",
       "args": {}

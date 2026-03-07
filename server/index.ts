@@ -577,6 +577,63 @@ Requirements:
   if (method === "POST" && (url === "/" || url === "/ipc")) {
     try {
       const parsed = (await readBody(req)) as Record<string, unknown>;
+
+      // Long-poll handler — must be before handleCommand since it manages its own response timing
+      if (parsed.command === "poll") {
+        const args = (parsed.args ?? {}) as Record<string, unknown>;
+        const agentId = args.agentId as string | undefined;
+        if (!agentId || !registry.get(agentId)) {
+          return json(res, 400, { ok: false, error: "Unknown or unregistered agentId" });
+        }
+        const since = Number(args.since ?? 0);
+        const timeout = Math.min(Math.max(Number(args.timeout ?? 15), 0), 30);
+
+        // Check for events immediately
+        let events = state.getEvents(since);
+        if (events.length > 0) {
+          const response: Record<string, unknown> = { ok: true, events, timestamp: Date.now() };
+          // Inject announcement
+          if (currentAnnouncement) {
+            const agentState = agentAnnouncementState.get(agentId);
+            if (agentState) {
+              response.announcement = currentAnnouncement;
+            }
+          }
+          return json(res, 200, response);
+        }
+
+        // No events yet — wait for new events or timeout
+        const response: Record<string, unknown> = await new Promise<Record<string, unknown>>((resolve) => {
+          let settled = false;
+          const cleanup = state.onEvent(() => {
+            if (settled) return;
+            const newEvents = state.getEvents(since);
+            if (newEvents.length > 0) {
+              settled = true;
+              clearTimeout(timer);
+              cleanup();
+              resolve({ ok: true, events: newEvents, timestamp: Date.now() });
+            }
+          });
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve({ ok: true, events: [], timestamp: Date.now() });
+          }, timeout * 1000);
+        });
+
+        // Inject announcement
+        if (currentAnnouncement) {
+          const agentState = agentAnnouncementState.get(agentId);
+          if (agentState) {
+            response.announcement = currentAnnouncement;
+          }
+        }
+
+        return json(res, 200, response);
+      }
+
       const result = await handleCommand(parsed);
       const response = result as Record<string, unknown>;
 

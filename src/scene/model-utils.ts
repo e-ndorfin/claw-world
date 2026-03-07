@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-/** Default bounding-box volume target (~ 2x2x2 cube) */
-export const DEFAULT_VOLUME = 8;
+/** Default bounding-box volume target (~ 5x5x5 cube) */
+export const DEFAULT_VOLUME = 125;
 
 /** Scale a group so its bounding-box volume matches `targetVolume`. */
 export function normalizeVolume(group: THREE.Group, targetVolume: number): void {

@@ -14,8 +14,8 @@ interface ItemEntry {
   loaded: boolean;
 }
 
-/** Volume target for items (smaller than default — items should be small on the ground) */
-const ITEM_VOLUME = 1.5;
+/** Volume target for items (~ 5x5x5 cube) */
+const ITEM_VOLUME = 125;
 
 /** Simple colored sphere shown instantly while the LLM model loads */
 function createPlaceholderSphere(color: string): THREE.Group {
