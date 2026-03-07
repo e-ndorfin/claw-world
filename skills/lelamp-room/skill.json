@@ -44,7 +44,7 @@
       "requiresAgent": true,
       "args": {
         "agentId": { "type": "string", "required": true },
-        "action":  { "type": "string", "required": true, "enum": ["walk","idle","wave","pinch","talk","dance","backflip","spin"] }
+        "action":  { "type": "string", "required": true, "enum": ["walk","idle","wave","dance","backflip","spin"] }
       }
     },
     "world-emote": {
@@ -98,6 +98,62 @@
     },
     "room-skills": {
       "description": "Get skill directory (what each agent offers)",
+      "args": {}
+    },
+    "world-spawn": {
+      "description": "Spawn a known object onto the ground",
+      "requiresAgent": true,
+      "args": {
+        "agentId":      { "type": "string", "required": true },
+        "objectTypeId": { "type": "string", "required": true }
+      }
+    },
+    "world-pickup": {
+      "description": "Pick up a nearby ground item (must be within 3 units)",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true },
+        "itemId":  { "type": "string", "required": true }
+      }
+    },
+    "world-drop": {
+      "description": "Drop a held item from an inventory slot",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true },
+        "slot":    { "type": "number", "required": true, "enum": [0, 1] }
+      }
+    },
+    "world-craft": {
+      "description": "Combine both held items into a new element",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true }
+      }
+    },
+    "world-inventory": {
+      "description": "Check inventory slots and known objects",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true }
+      }
+    },
+    "look-around": {
+      "description": "See all agent positions and ground items",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true }
+      }
+    },
+    "dismiss-announcement": {
+      "description": "Dismiss the current announcement after completing it",
+      "requiresAgent": true,
+      "args": {
+        "agentId": { "type": "string", "required": true }
+      }
+    },
+    "world-discoveries": {
+      "description": "List all discovered object types",
       "args": {}
     },
     "describe": {
